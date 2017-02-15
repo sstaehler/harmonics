@@ -7,10 +7,6 @@ from obspy.signal.util import next_pow_2
 import harmonics
 import matplotlib.patches as patches
 
-import argparse
-import glob
-from progressbar import Percentage, ETA, ProgressBar, Bar, FileTransferSpeed
-
 
 def _pick_longperiod(t, f, s, fmin=0.01, fmax=0.1):
     # pick time windows with high long-period noise level
@@ -31,15 +27,18 @@ def _pick_longperiod(t, f, s, fmin=0.01, fmax=0.1):
     level = []
 
     for time, crossi in zip(t, cross):
-        if crossi > np.median(cross) + 5:
-            times.append(time)
-            level.append(crossi)
+        # if crossi > np.median(cross) + 2:
+        times.append(time)
+        level.append(crossi)
 
     return times, level
 
 
 def calc_spec(file, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
-              pick_harmonics=True, fmin_pick=0.4, fmax_pick=1.2):
+              pick_harmonics=True, fmin_pick=0.4, fmax_pick=1.2, nharms=6,
+              sigma_min=1e-3, p_peak_min=5.,
+              plot=False,
+              file_out=False):
 
     # Get Name of station and channel from file names (only works with the
     # TDC data).
@@ -59,37 +58,31 @@ def calc_spec(file, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
         tr.attach_response(inv)
         tr.remove_response(pre_filt=(1./240., 1./180., 20., 25.))
         tr.decimate(2, no_filter=True)
-        tr.write(fnam_corr, format='MSEED')
+        if file_out:
+            tr.write(fnam_corr, format='MSEED')
 
+    if file_out:
+        # Check whether spectrogram image already exists
+        fnam_pic = '%s.%s_%02d_%02d_%02d.png' % (tr.stats.station,
+                                                 tr.stats.channel,
+                                                 tr.stats.starttime.month,
+                                                 tr.stats.starttime.day,
+                                                 tr.stats.starttime.hour)
 
-    # Check whether spectrogram image already exists
-    fnam_pic = '%s.%s_%02d_%02d_%02d.png' % (tr.stats.station,
-                                             tr.stats.channel,
-                                             tr.stats.starttime.month,
-                                             tr.stats.starttime.day,
-                                             tr.stats.starttime.hour)
-
-    if os.path.exists(os.path.join(dirpath, 'Spectrograms', fnam_pic)):
-        print('Image already exists')
-        return
+        if os.path.exists(os.path.join(dirpath, 'Spectrograms', 'plot',
+                                       fnam_pic)):
+            print('Image already exists')
+            return
 
     s, f, t = specgram(tr.data, Fs=tr.stats.sampling_rate,
                        NFFT=winlen*tr.stats.sampling_rate,
-                       pad_to=next_pow_2(winlen*tr.stats.sampling_rate),
+                       pad_to=next_pow_2(winlen*tr.stats.sampling_rate) * 2,
                        noverlap=winlen*tr.stats.sampling_rate*0.5)
 
     s = 10*np.log10(s)
 
-    fnam = '%s.%s_%02d_%02d_%02d.npy' % (tr.stats.station,
-                                         tr.stats.channel,
-                                         tr.stats.starttime.month,
-                                         tr.stats.starttime.day,
-                                         tr.stats.starttime.hour)
-    np.savez_compressed(os.path.join(dirpath, 'Spectrograms', fnam),
-                        s=s, f=f, t=t)
-
     # setup figure
-    fig = plt.figure()
+    fig = plt.figure(figsize=(16, 9))
 
     ax1 = fig.add_axes([0.1, 0.75, 0.7, 0.2])  # [left bottom width height]
     ax2a = fig.add_axes([0.1, 0.35, 0.7, 0.4], sharex=ax1)
@@ -109,21 +102,27 @@ def calc_spec(file, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
     ax2a.grid('on')
 
     if (pick_harmonics):
-        times, freqs, peakvals = harmonics.pick_spectrogram(f, t, s,
-                                                            fwin=(fmin_pick,
-                                                                  fmax_pick))
+        times, freqs, peakvals, fmax_used = \
+            harmonics.pick_spectrogram(f, t, s,
+                                       fwin=[fmin_pick,
+                                             fmax_pick],
+                                       sigma_min=sigma_min,
+                                       p_peak_min=p_peak_min,
+                                       winlen=winlen,
+                                       nharms=nharms)
         for time, freq in zip(times, freqs):
-            posx = time - winlen/4
-            posy = f[0]
-            patchi = patches.Rectangle((posx, posy),
-                                       width=winlen/2, height=f[-1],
-                                       alpha=0.1,
-                                       color=(0.8, 0, 0), edgecolor=None)
-            ax2a.add_patch(patchi)
+            # posx = time - winlen/4
+            # posy = f[0]
+            # patchi = patches.Rectangle((posx, posy),
+            #                            width=winlen/2, height=f[-1],
+            #                            alpha=0.1,
+            #                            color=(0.8, 0, 0), edgecolor=None)
+            # ax2a.add_patch(patchi)
             ax2a.plot(time, freq, 'k+')
 
         ax2a.hlines((fmin_pick, fmax_pick), 0, t[-1],
                     colors='k', linestyles='dashed')
+    ax2a.plot(t, fmax_used, 'r')
 
     # Axis with low frequency part of spectrogram
     ax2b.pcolormesh(t, np.log10(1./f) + 1., s,
@@ -135,6 +134,7 @@ def calc_spec(file, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
     ax2b.set_yticks((1, 2, 3))
     ax2b.set_yticklabels((1, 10, 100))
     ax2b.grid('on')
+    ax2b.plot(t, fmax_used, 'r')
 
     if (pick_harmonics):
         for time, freq in zip(times, freqs):
@@ -148,7 +148,7 @@ def calc_spec(file, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
 
         for time, level in zip(times_lp, level_lp):
             posx = time - winlen/4
-            posy = np.log10(1./fmin) + 1
+            posy = 2
             patchi = patches.Rectangle((posx, posy),
                                        width=winlen / 2, height=2,
                                        alpha=0.1,
@@ -168,11 +168,21 @@ def calc_spec(file, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
                    tr.stats.starttime.hour,
                    tr.stats.starttime.minute,
                    tr.stats.starttime.second,))
+    if plot:
+        plt.show()
 
-    plt.savefig(os.path.join(dirpath, 'Spectrograms', fnam_pic), dpi=300)
-    plt.close('all')
+    if file_out:
+        fnam = '%s.%s_%02d_%02d_%02d.npy' % (tr.stats.station,
+                                             tr.stats.channel,
+                                             tr.stats.starttime.month,
+                                             tr.stats.starttime.day,
+                                             tr.stats.starttime.hour)
+        np.savez_compressed(os.path.join(dirpath, 'Spectrograms', 'data', fnam),
+                            s=s, f=f, t=t)
 
-    if pick_harmonics:
+        plt.savefig(os.path.join(dirpath, 'Spectrograms', fnam_pic), dpi=300)
+
+    if pick_harmonics and file_out:
         fnam = os.path.join(dirpath, 'picks', tr.stats.station,
                             '%s_harmonic.txt' % tr.stats.channel)
         with open(fnam, 'a') as fid:
@@ -187,31 +197,6 @@ def calc_spec(file, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
                 t_string = str(tr.stats.starttime + time)
                 fid.write('%s, %f\n' % (t_string, level))
 
+    plt.close('all')
 
-# Main program
-helptext = 'Plot spectrograms of OBS data and find harmonic signal'
-parser = argparse.ArgumentParser(description=helptext)
-
-helptext = 'Path to data files'
-parser.add_argument('data_path', help=helptext)
-
-helptext = 'Minimum frequency for harmonic picking (default: 0.4 Hz)'
-parser.add_argument('--fmin', type=float, default=0.4)
-
-helptext = 'Maximum frequency for harmonic picking (default: 1.2 Hz)'
-parser.add_argument('--fmax', type=float, default=1.2)
-
-args = parser.parse_args()
-
-file_list = glob.glob(args.data_path)
-file_list.sort()
-
-# Create Progressbar widgets
-widgets = ['Calculating: ', Percentage(), ' ', Bar(),
-           ' ', ETA(), ' ', FileTransferSpeed()]
-
-pbar = ProgressBar(widgets=widgets, max_value=len(file_list)).start()
-
-for fnam in file_list:
-    calc_spec(fnam, fmin_pick=args.fmin, fmax_pick=args.fmax)
-    pbar += 1
+    return f, t, s
