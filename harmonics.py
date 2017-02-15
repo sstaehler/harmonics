@@ -7,42 +7,52 @@ from scipy.optimize import minimize
 from scipy import convolve
 
 
-def _gaussfun(x, x0, p_peak, sigma, baseline=0.0, basegrad=0.0):
-    return p_peak * np.exp(- (x - x0) ** 2 / (2 * sigma) ** 2) + \
-           baseline + basegrad * x
+def _gaussfun(x, x0, p_peak, sigma):
+    return p_peak * np.exp(- (x - x0) ** 2 / (2 * sigma) ** 2)
 
 
 def _misfit(m, f, s):
     x0 = m[0]
     p_peak = m[1]
     sigma = m[2]
-    baseline = 0.0  # m[3]
-    basegrad = 0.0  # m[4]
-    diff = _gaussfun(f, x0, p_peak, sigma, baseline, basegrad) - s
+    diff = _gaussfun(f, x0, p_peak, sigma) - s
     return np.sqrt(np.sum(diff**2))
 
 
-def pick_spectrogram(f, t, s, fwin=(0.4, 1.1), winlen=150, sigma_min=0.005):
+def pick_spectrogram(f, t, s, fwin=(0.4, 1.1), winlen=150, sigma_min=0.005,
+                     s_threshold=-140):
     times = []
     freqs = []
+    idx = []
     times_cleaned = []
     freqs_cleaned = []
+    idx_cleaned = []
+
+    # Calculate mean energy between fmax and 3*fmax
+    b = np.array([f[:] > fwin[1],
+                  f[:] < fwin[1]*3]).all(axis=0)
+    s_mean = np.mean(s[b, :], axis=0)
 
     for i in range(0, len(t)):
-        f_peak, p_peak, sigma = HPS(f, s[:, i],
-                                    fwin_pick=fwin,
-                                    maxharms=3, plot=False)
+        if s_mean[i] > s_threshold:
+            f_peak, p_peak, sigma = HPS(f, s[:, i],
+                                        fwin_pick=fwin,
+                                        maxharms=3, plot=False)
 
-        if (sigma > sigma_min and fwin[0] < f_peak < fwin[1]):
-            freqs.append(f_peak)
-            times.append(t[i])
+            if (sigma > sigma_min and fwin[0] < f_peak < fwin[1]):
+                if len(freqs) > 0 and f_peak > 1.8 * freqs[-1]:
+                    f_peak /= 2.
+                freqs.append(f_peak)
+                times.append(t[i])
+                idx.append(i)
 
     for i in range(0, len(freqs)-1):
         if times[i+1] - times[i] == winlen:
             times_cleaned.append(times[i])
             freqs_cleaned.append(freqs[i])
+            idx_cleaned.append(idx[i])
 
-    return times_cleaned, freqs_cleaned
+    return times_cleaned, freqs_cleaned, idx_cleaned
 
 
 def freq_from_HPS(tr, winlen=120., fwin_pick=(1., 4.), plot=False, maxharms=8):
@@ -99,7 +109,7 @@ def HPS(f, c, fwin_pick=(1., 4.), plot=False, maxharms=8):
     # Pick maximum by fitting Gaussian
     # Set starting values
     # f0 = np.mean(fwin_pick)
-    x0 = np.asarray((f_peak_initial, p_peak_initial, 0.01)) # -126, -7))
+    x0 = np.asarray((f_peak_initial, p_peak_initial, 0.01))
 
     # minimize
     res = minimize(fun=_misfit, x0=x0,
