@@ -20,77 +20,71 @@ def _misfit(m, f, s):
 
 
 def pick_spectrogram(f, t, s, fwin=(0.4, 1.1), winlen=150, sigma_min=0.005,
-                     p_peak_min=10.0,
+                     p_peak_min=10.0, s_threshold=-150,
                      nharms=4, plot=False, verbose=False):
     times = []
     freqs = []
     p_peaks = []
-    times_cleaned = []
-    freqs_cleaned = []
-    p_peaks_cleaned = []
-
-    fwin_orig = fwin
 
     fmax_used = []
 
     f_prop = -1
 
+    # Calculate mean energy between fmax and 3*fmax
+    b = np.array([f[:] > fwin[1],
+                  f[:] < fwin[1]*3]).all(axis=0)
+    s_mean = np.mean(s[b, :], axis=0)
+
     for i in range(0, len(t)):
-        f_peak, p_peak, sigma = HPS(f, s[:, i],
-                                    fwin_pick=fwin,
-                                    nharms=nharms,
-                                    f_prop=f_prop,
-                                    plot=plot)
+        if s_mean[i] > s_threshold:
+            f_peak, p_peak, sigma = HPS(f, s[:, i],
+                                        fwin_pick=fwin,
+                                        nharms=nharms,
+                                        f_prop=f_prop,
+                                        plot=plot)
 
-        if f_peak > (fwin[1] - fwin[0]) / 2:
-            f_peak_2, p_peak_2, sigma_2 \
-                = HPS(f, s[:, i],
-                      fwin_pick=fwin,
-                      nharms=1,
-                      f_prop=f_peak / 2,
-                      plot=plot)
+            if f_peak > (fwin[1] - fwin[0]) / 2:
+                f_peak_2, p_peak_2, sigma_2 \
+                    = HPS(f, s[:, i],
+                          fwin_pick=fwin,
+                          nharms=1,
+                          f_prop=f_peak / 2,
+                          plot=plot)
 
-            choose_new = sigma_2 > sigma_min and \
-                p_peak_2 > p_peak * 0.8 and \
-                f_peak_2 < f_peak * 0.75
+                choose_new = sigma_2 > sigma_min and \
+                    p_peak_2 > p_peak * 0.8 and \
+                    f_peak_2 < f_peak * 0.75
 
-            if choose_new:
-                f_peak = f_peak_2
-                p_peak = p_peak_2
-                sigma = sigma_2
+                if choose_new:
+                    f_peak = f_peak_2
+                    p_peak = p_peak_2
+                    sigma = sigma_2
+
+                if verbose:
+                    print(t[i], f_peak, f_peak_2,
+                          p_peak, p_peak_2, sigma_2, choose_new)
+
+            pick = (sigma > sigma_min and
+                    fwin[0] < f_peak < fwin[1] and
+                    p_peak > p_peak_min)
 
             if verbose:
-                print(t[i], f_peak, f_peak_2,
-                      p_peak, p_peak_2, sigma_2, choose_new)
+                print(t[i], f_peak, p_peak, sigma, pick)
 
-        pick = (sigma > sigma_min and
-                fwin[0] < f_peak < fwin[1] and
-                p_peak > p_peak_min)
+            if pick:
+                freqs.append(f_peak)
+                times.append(t[i])
+                p_peaks.append(p_peak)
 
-        if verbose:
-            print(t[i], f_peak, p_peak, sigma, pick)
+            if pick:
+                f_prop = f_peak
+                # fwin[1] = f_prop * 1.1
+            else:
+                f_prop = -1
+                # fwin = fwin_orig
 
-        if pick:
-            freqs.append(f_peak)
-            times.append(t[i])
-            p_peaks.append(p_peak)
+            fmax_used.append(fwin[1])
 
-        if pick:
-            f_prop = f_peak
-            #fwin[1] = f_prop * 1.1
-        else:
-            f_prop = -1
-            #fwin = fwin_orig
-
-        fmax_used.append(fwin[1])
-
-    # for i in range(0, len(freqs)-1):
-    #     if times[i+1] - times[i] == winlen:
-    #         times_cleaned.append(times[i])
-    #         freqs_cleaned.append(freqs[i])
-    #         p_peaks_cleaned.append(p_peaks[i])
-
-    # return times_cleaned, freqs_cleaned, p_peaks_cleaned
     return times, freqs, p_peaks, fmax_used
 
 
