@@ -19,7 +19,9 @@ def _misfit(m, f, s):
     return np.sqrt(np.sum(diff**2))
 
 
-def pick_spectrogram(f, t, s, fwin=(0.4, 1.1), winlen=150, sigma_min=0.005):
+def pick_spectrogram(f, t, s, fwin=(0.4, 1.1), winlen=150, sigma_min=0.005,
+                     p_peak_min=10.0,
+                     nharms=4, plot=False, verbose=False):
     times = []
     freqs = []
     p_peaks = []
@@ -27,26 +29,73 @@ def pick_spectrogram(f, t, s, fwin=(0.4, 1.1), winlen=150, sigma_min=0.005):
     freqs_cleaned = []
     p_peaks_cleaned = []
 
+    fwin_orig = fwin
+
+    fmax_used = []
+
+    f_prop = -1
+
     for i in range(0, len(t)):
         f_peak, p_peak, sigma = HPS(f, s[:, i],
                                     fwin_pick=fwin,
-                                    maxharms=3, plot=False)
+                                    nharms=nharms,
+                                    f_prop=f_prop,
+                                    plot=plot)
 
-        if (sigma > sigma_min and fwin[0] < f_peak < fwin[1]):
+        if f_peak > (fwin[1] - fwin[0]) / 2:
+            f_peak_2, p_peak_2, sigma_2 \
+                = HPS(f, s[:, i],
+                      fwin_pick=fwin,
+                      nharms=1,
+                      f_prop=f_peak / 2,
+                      plot=plot)
+
+            choose_new = sigma_2 > sigma_min and \
+                p_peak_2 > p_peak * 0.8 and \
+                f_peak_2 < f_peak * 0.75
+
+            if choose_new:
+                f_peak = f_peak_2
+                p_peak = p_peak_2
+                sigma = sigma_2
+
+            if verbose:
+                print(t[i], f_peak, f_peak_2,
+                      p_peak, p_peak_2, sigma_2, choose_new)
+
+        pick = (sigma > sigma_min and
+                fwin[0] < f_peak < fwin[1] and
+                p_peak > p_peak_min)
+
+        if verbose:
+            print(t[i], f_peak, p_peak, sigma, pick)
+
+        if pick:
             freqs.append(f_peak)
             times.append(t[i])
             p_peaks.append(p_peak)
 
-    for i in range(0, len(freqs)-1):
-        if times[i+1] - times[i] == winlen:
-            times_cleaned.append(times[i])
-            freqs_cleaned.append(freqs[i])
-            p_peaks_cleaned.append(p_peaks[i])
+        if pick:
+            f_prop = f_peak
+            #fwin[1] = f_prop * 1.1
+        else:
+            f_prop = -1
+            #fwin = fwin_orig
 
-    return times_cleaned, freqs_cleaned, p_peaks_cleaned
+        fmax_used.append(fwin[1])
+
+    # for i in range(0, len(freqs)-1):
+    #     if times[i+1] - times[i] == winlen:
+    #         times_cleaned.append(times[i])
+    #         freqs_cleaned.append(freqs[i])
+    #         p_peaks_cleaned.append(p_peaks[i])
+
+    # return times_cleaned, freqs_cleaned, p_peaks_cleaned
+    return times, freqs, p_peaks, fmax_used
 
 
-def freq_from_HPS(tr, winlen=120., fwin_pick=(1., 4.), plot=False, maxharms=8):
+def freq_from_HPS(tr, winlen=120., fwin_pick=(1., 4.), nharms=6, f_prop=-1,
+                  plot=False):
     """
     Estimate frequency using harmonic product spectrum (HPS)
     """
@@ -58,13 +107,13 @@ def freq_from_HPS(tr, winlen=120., fwin_pick=(1., 4.), plot=False, maxharms=8):
                     pad_to=next_pow_2(winlen*tr.stats.sampling_rate))
     c = 10*np.log10(c)
 
-    f_peak, p_peak = HPS(f, c, fwin_pick, plot, maxharms)
+    f_peak, p_peak = HPS(f, c, fwin_pick, plot, nharms)
     return f_peak, p_peak
 
 
-def HPS(f, c, fwin_pick=(1., 4.), plot=False, maxharms=8):
-    c_prod = np.copy(c[0: int(len(c) / maxharms)])
-    c_prod = convolve(c_prod, [0.25, 0.5, 0.25], mode='same')
+def HPS(f, c, fwin_pick, plot=False, nharms=6, f_prop=-1):
+    c_prod = np.copy(c[0: int(len(c) / nharms)])
+    c_prod = convolve(c_prod, [0.25, 0.5, 0.25], mode='same') * 2
 
     if plot:
         fig = plt.figure()
@@ -73,7 +122,7 @@ def HPS(f, c, fwin_pick=(1., 4.), plot=False, maxharms=8):
                 c,
                 label='Main mode')
 
-    for i in range(2, maxharms + 1):
+    for i in range(2, nharms + 1):
         a = decimate(c, i)
         c_prod += a[0:len(c_prod)]
         if plot:
@@ -97,9 +146,13 @@ def HPS(f, c, fwin_pick=(1., 4.), plot=False, maxharms=8):
     f_peak_initial = f_prod[i]
     p_peak_initial = c_prod_det[i]
 
+    # if a frequency value has been proposed, override the maximum
+    if fwin_pick[0] < f_prop < fwin_pick[1]:
+        f_peak_initial = f_prop
+
     # Pick maximum by fitting Gaussian
     # Set starting values
-    x0 = np.asarray((f_peak_initial, p_peak_initial, 0.01))
+    x0 = np.asarray((f_peak_initial, p_peak_initial, 0.004))
 
     # minimize
     res = minimize(fun=_misfit, x0=x0,
@@ -112,11 +165,12 @@ def HPS(f, c, fwin_pick=(1., 4.), plot=False, maxharms=8):
     sigma = res['x'][2]
 
     if plot:
-        ax.plot(f_prod,
-                c_prod,
-                'k',
-                label='Product', LineWidth=3)
-        ax.plot(f_prod, c_prod_det - 140, label='detrend',
+        # ax.plot(f_prod,
+        #         c_prod,
+        #         'k',
+        #         label='Product', LineWidth=3)
+        ax.plot(f_prod, c_prod_det - 140, 'k',
+                label='detrend',
                 LineWidth=3)
         ax.plot(f_prod,
                 _gaussfun(f_prod, *x0) - 140,
@@ -126,7 +180,7 @@ def HPS(f, c, fwin_pick=(1., 4.), plot=False, maxharms=8):
                 _gaussfun(f_prod, *res['x']) - 140,
                 'r', Linewidth=3,
                 label='fit')
-        ax.set_xlim(f[0], f[-1]/maxharms)
+        ax.set_xlim(f[0], f[-1]/nharms)
         ax.legend()
         ax.vlines(fwin_pick[0], -150, -90, 'r')
         ax.vlines(fwin_pick[1], -150, -90, 'r')
