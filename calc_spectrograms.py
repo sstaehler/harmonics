@@ -2,22 +2,33 @@ import glob
 import os
 from calc_spec_utils import calc_spec
 from multiprocessing import Pool
+from tqdm import tqdm
+from obspy import read_events
+import sys
 
-dirpath = '/media/staehler/Staehler_Transfer/Noise LOBSTER/'
-stat = 'TDC01'
-# chan = 'HHX'
+dirpath = '/opt/DARS/Corrected/'
+stat = sys.argv[1]
 
-fmin = 1e-2
-fmax = 10.
+cat = read_events(sys.argv[2])
 
-vmin = -180.
-vmax = -80.
+for chan in ['?DH', '?H?']:
+    files = glob.glob(os.path.join(dirpath, stat, chan, '*.seed'))
+    files.sort()
 
-winlen = 300.
+    if __name__ == '__main__':
+        for file in tqdm(files):
+            if chan=='?DH':
+                vmin=-60
+                vmax=40
+            else:
+                vmin=-160
+                vmax=-60
 
-files = glob.glob(os.path.join(dirpath, stat, 'HH[XYZ]', '*.mseed'))
-files.sort()
+            calc_spec(file, cat=cat, vmin=vmin, vmax=vmax)
 
-if __name__ == '__main__':
-    p = Pool(4)
-    p.map(calc_spec, files)
+
+#    p = Pool(4)
+#    for _ in tqdm(p.imap_unordered(calc_spec, files),
+#                  total=len(files)):
+#        pass
+    # p.map(calc_spec, files)
