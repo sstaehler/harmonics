@@ -38,24 +38,30 @@ def _pick_longperiod(t, f, s, fmin=0.01, fmax=0.1):
     return times, level
 
 
-def write_picks(path, times, picks, stats, st_current):
+def write_picks(path, times, picks, peakvals, stats, st_current):
     fnam_out = os.path.join(path, 'picks_%s_%s.txt' %
                             (stats.station, stats.channel))
-    dt_curr = st_current[0].stats.delta
-    st_curr_16m = st_current.select(station='16m')
-    st_curr_18m = st_current.select(station='18m')
+    if st_current:
+        dt_curr = st_current[0].stats.delta
+        st_curr_16m = st_current.select(station='16m')
+        st_curr_18m = st_current.select(station='18m')
+
     with open(fnam_out, 'a') as fid:
-        for t, p in zip(times, picks):
+        for t, p, peak in zip(times, picks, peakvals):
             t_out = stats.starttime + t
-            curr_16m_trim = st_curr_16m.slice(starttime=t_out - dt_curr,
-                                              endtime=t_out + dt_curr)
-            data_16m = np.sqrt(curr_16m_trim[0].data[0]**2 +
-                               curr_16m_trim[1].data[0]**2) * 1e-3
-            curr_18m_trim = st_curr_18m.slice(starttime=t_out - dt_curr,
-                                              endtime=t_out + dt_curr)
-            data_18m = np.sqrt(curr_18m_trim[0].data[0]**2 +
-                               curr_18m_trim[1].data[0]**2) * 1e-3
-            fid.write('%s, %f, %f, %f\n' % (t_out, p, data_16m, data_18m))
+            if st_current:
+                curr_16m_trim = st_curr_16m.slice(starttime=t_out - dt_curr,
+                                                  endtime=t_out + dt_curr)
+                curr_18m_trim = st_curr_18m.slice(starttime=t_out - dt_curr,
+                                                  endtime=t_out + dt_curr)
+
+                data_16m = np.sqrt(curr_16m_trim[0].data[0]**2 +
+                                   curr_16m_trim[1].data[0]**2) * 1e-3
+                data_18m = np.sqrt(curr_18m_trim[0].data[0]**2 +
+                                   curr_18m_trim[1].data[0]**2) * 1e-3
+                fid.write('%s, %f, %f, %f, %f\n' % (t_out, p, peak, data_16m, data_18m))
+            else: 
+                fid.write('%s, %f, %f\n' % (t_out, p, peak))
 
 
 def time_of_day(time):
@@ -64,8 +70,8 @@ def time_of_day(time):
 
 def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
               pick_harmonics=False, fmin_pick=0.4, fmax_pick=1.2,
-              s_threshold=-140, path_out='.', nharms=6, sigma_min=1e-3,
-              p_peak_min=5, st_current=None, cat=None):
+              s_threshold=-140, path_out='.', nharms=4, sigma_min=1e-3,
+              p_peak_min=5, dpi=100, st_current=None, cat=None):
 
     st = obspy.read(fnam_smgr)
     if len(st) > 1:
@@ -189,7 +195,7 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
                     colors='k', linestyles='dashed')
         # Write Picks to file
         write_picks(os.path.join(path_out, 'Picks'),
-                    times, freqs, tr.stats, st_current)
+                    times, freqs, peakvals, tr.stats, st_current)
 
     # Axis with low frequency part of spectrogram
     ax2b.pcolormesh(t, np.log10(1./f) + 1., slog,
@@ -198,13 +204,18 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
     ax2b.set_xlabel('time / seconds')
     ax2b.set_ylabel('period / seconds')
     ax2b.set_xlim(0, t[-1])
+
     ax2b.set_yticks((1, 2, 3))
     ax2b.set_yticklabels((1, 10, 100))
+    ax2b.set_yticks(np.log10((2, 5, 20, 50)) + 1, minor=True)
+    ax2b.set_yticklabels((2, 5, 20, 50), minor=True)
+    ax2b.grid(axis='y', which='major', linewidth=1)
+    ax2b.grid(axis='y', which='minor')
 
     ax1.set_xticks(np.arange(0, 86401, 10800))
     ax2b.set_xticklabels(['00:00', '03:00', '06:00', '09:00', '12:00',
                           '15:00', '18:00', '21:00', '24:00'])
-    ax2b.grid('on')
+    ax2b.grid(axis='x')
 
     if (pick_harmonics):
         for time, freq in zip(times, freqs):
@@ -246,6 +257,7 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
     ax4a.set_xticks((-150, -100, -50, 0, 50, 100))
     ax4a.set_xticklabels(())
     ax4a.set_xlim(vmin, vmax)
+    ax4b.grid(axis='y', which='major', linewidth=1)
     ax4a.grid('on')
 
     ax4b.plot(np.mean(slog, axis=1), np.log10(1./f) + 1., color='black')
@@ -253,12 +265,19 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
               color='darkgrey', linestyle='dashed')
     ax4b.plot(np.percentile(slog, axis=1, q=5), np.log10(1./f) + 1.,
               color='darkgrey', linestyle='dashed')
-    ax4b.set_yticks((1, 2, 3))
-    ax4b.set_yticklabels((1, 10, 100))
     ax4b.set_xticks((-150, -100, -50, 0, 50, 100))
     ax4b.set_xlim(vmin, vmax)
+    ax4b.set_ylabel('period / seconds')
     ax4b.set_xlabel('Amplitude / dB')
-    ax4b.grid('on')
+    ax4b.yaxis.set_label_position('right')
+
+    ax4b.set_yticks((1, 2, 3))
+    ax4b.set_yticklabels((1, 10, 100))
+    ax4b.set_yticks(np.log10((2, 5, 20, 50)) + 1, minor=True)
+    ax4b.set_yticklabels((2, 5, 20, 50), minor=True)
+    ax4b.grid(axis='y', which='major', linewidth=1)
+    ax4b.grid(axis='y', which='minor')
+    ax4b.grid(axis='x')
     ax4b.yaxis.tick_right()
 
     fig.suptitle('%s.%s Day %04d/%02d/%02d - %02d:%02d:%02d' %
@@ -272,7 +291,7 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
                   tr.stats.starttime.second,))
 
     plt.savefig(os.path.join(path_out, 'Spectrograms', fnam_pic),
-                dpi=100)
+                dpi=dpi)
     plt.close('all')
 
     return f, t, s
