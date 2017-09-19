@@ -38,48 +38,37 @@ def _pick_longperiod(t, f, s, fmin=0.01, fmax=0.1):
     return times, level
 
 
-def write_picks(path, times, picks, peakvals, stats, st_current):
+def write_picks(path, times, picks, peakvals, stats):
     fnam_out = os.path.join(path, 'picks_%s_%s.txt' %
                             (stats.station, stats.channel))
-    if st_current:
-        dt_curr = st_current[0].stats.delta
-        st_curr_16m = st_current.select(station='16m')
-        st_curr_18m = st_current.select(station='18m')
 
     with open(fnam_out, 'a') as fid:
         for t, p, peak in zip(times, picks, peakvals):
             t_out = stats.starttime + t
-            if st_current:
-                curr_16m_trim = st_curr_16m.slice(starttime=t_out - dt_curr,
-                                                  endtime=t_out + dt_curr)
-                curr_18m_trim = st_curr_18m.slice(starttime=t_out - dt_curr,
-                                                  endtime=t_out + dt_curr)
-
-                data_16m = np.sqrt(curr_16m_trim[0].data[0]**2 +
-                                   curr_16m_trim[1].data[0]**2) * 1e-3
-                data_18m = np.sqrt(curr_18m_trim[0].data[0]**2 +
-                                   curr_18m_trim[1].data[0]**2) * 1e-3
-                fid.write('%s, %f, %f, %f, %f\n' % (t_out, p, peak, data_16m, data_18m))
-            else: 
-                fid.write('%s, %f, %f\n' % (t_out, p, peak))
+            fid.write('%s, %f, %f\n' % (t_out, p, peak))
 
 
 def time_of_day(time):
     return time.hour*3600 + time.minute*60 + time.second
 
 
-def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
+def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10, 
+              vmin=-180, vmax=-80, winlen=300,
               pick_harmonics=False, fmin_pick=0.4, fmax_pick=1.2,
+              plot_highfreq=True,
+              fmin_plot=None, fmax_plot=None,
               s_threshold=-140, path_out='.', nharms=4, sigma_min=1e-3,
-              p_peak_min=5, dpi=100, st_current=None, cat=None):
+              p_peak_min=5, dpi=100, cat=None):
 
     st = obspy.read(fnam_smgr)
     if len(st) > 1:
         raise ValueError('Only one trace per seismogram file, please!')
     else:
         tr = st[0]
+    
+    if tr.stats.sampling_rate > 25:
+        tr.decimate(int(tr.stats.sampling_rate / 25))
 
-    tr.decimate(int(tr.stats.sampling_rate / 25))
     # Workaround for the stations starting one sample early
     tr.stats.starttime += 1
 
@@ -105,24 +94,45 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
 
     # Seismogram axis
     ax1 = fig.add_axes([0.1, 0.75, 0.7, 0.2])  # [left bottom width height]
-    if st_current:
+    if fnam_aux:
         ax1b = ax1.twinx()
-    # Spectrogram axis (f>1Hz)
-    ax2a = fig.add_axes([0.1, 0.35, 0.7, 0.4], sharex=ax1)
-    # Spectrogram axis (p>1s)
-    ax2b = fig.add_axes([0.1, 0.1, 0.7, 0.25], sharex=ax1)
+
+    if plot_highfreq:
+        # Spectrogram axis (f>1Hz)
+        ax2a = fig.add_axes([0.1, 0.45, 0.7, 0.3], sharex=ax1)
+        # Spectrogram axis (p>1s)
+        ax2b = fig.add_axes([0.1, 0.1, 0.7, 0.35], sharex=ax1)
+    else:
+        # Spectrogram axis (p>1s)
+        ax2b = fig.add_axes([0.1, 0.1, 0.7, 0.65], sharex=ax1)
+
     # Colorbar axis
     ax3 = fig.add_axes([0.83, 0.8, 0.03, 0.15])
-    # Mean PSD axis (f>1Hz)
-    ax4a = fig.add_axes([0.8, 0.35, 0.1, 0.4], sharey=ax2a)
-    # Mean PSD axis (p>1s)
-    ax4b = fig.add_axes([0.8, 0.1, 0.1, 0.25], sharey=ax2b)
+
+    if plot_highfreq:
+        # Mean PSD axis (f>1Hz)
+        ax4a = fig.add_axes([0.8, 0.45, 0.1, 0.3], sharey=ax2a)
+        # Mean PSD axis (p>1s)
+        ax4b = fig.add_axes([0.8, 0.1, 0.1, 0.35], sharey=ax2b)
+    else:
+        # Mean PSD axis (p>1s)
+        ax4b = fig.add_axes([0.8, 0.1, 0.1, 0.65], sharey=ax2b)
 
     # Axis with seismogram
-    ax1.plot(tr.times() + time_of_day(tr.stats.starttime), tr.data, 'k')
-    #ymaxmin = np.percentile(abs(tr.data), q=99.5) * 1.1
-    ymaxmin = max(abs(tr.data)) * 1.1
+    tr_filt = tr.copy()
+
+    # Filter, if desired
+    if fmin_plot:
+        tr_filt.filter('highpass', freq=fmin_plot)
+    if fmax_plot:
+        tr_filt.filter('lowpass', freq=fmax_plot)
+
+    ax1.plot(tr.times() + time_of_day(tr.stats.starttime), 
+             tr_filt.data, 
+             'k', linewidth=0.5)
+    ymaxmin = np.percentile(abs(tr_filt.data), q=99.99) * 1.1
     ax1.set_ylim(-ymaxmin, ymaxmin)
+
     if tr.stats.channel == 'BDH':
         ax1.set_ylabel('Pressure / Pa')
     else:
@@ -130,78 +140,59 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
     ax1.grid('on')
     plt.setp(ax1.get_xticklabels(), visible=False)
 
-    # # Plot mean energy above fmax_pick
-    # b = np.array([f[:] > fmax_pick,
-    #               f[:] < fmax_pick*3]).all(axis=0)
-    # ax1b.hlines(s_threshold, xmin=0, xmax=86400, linestyle='dashed', color='r')
-    # ax1b.plot(t, np.mean(slog[b, :], axis=0), 'r')
-    # ax1b.set_ylim(vmin*1.1, vmax*0.9)
+    # If we ahave an auxilliary dataset, plot it in here.
+    if fnam_aux:
+        tr_aux = obspy.read(fnam_aux)[0]
+        tr_aux.trim(tr.stats.starttime, tr.stats.endtime)
+        ax1b.plot(tr_aux.times() + time_of_day(tr_aux.stats.starttime), 
+                 tr_aux.data, 
+                 'r', linewidth=0.5)
 
-    # If we ahave a current object, plot it in here.
-    if st_current:
-        data_x = st_current[0].times() - float(tr.stats.starttime) \
-            + float(st_current[0].stats.starttime)
-
-        # Plot current in 18 m depth
-        st_curr_18m = st_current.select(station='18m')
-        data_y = np.sqrt(st_curr_18m[0].data**2 +
-                         st_curr_18m[1].data**2) * 1e-3
-        ax1b.plot(data_x, data_y,
-                  color='r', linewidth=2, label='18 meter')
-
-        # Plot current in 18 m depth
-        st_curr_16m = st_current.select(station='16m')
-        data_y = np.sqrt(st_curr_16m[0].data**2 +
-                         st_curr_16m[1].data**2) * 1e-3
-        ax1b.plot(data_x, data_y, label='16 meter',
-                  color='orange', linewidth=2)
-
-        ax1b.set_ylim(0, 1)
-        ax1b.set_ylabel('Current velocity, m/s', color='r')
+        ax1b.set_ylim(min(tr_aux.data), max(tr_aux.data))
         ax1b.tick_params('y', colors='r')
-        ax1b.legend()
 
 
-    # Axis with high frequency part of spectrogram
-    ax2a.pcolormesh(t, f, slog,
-                    vmin=vmin, vmax=vmax, cmap='plasma')
-    ax2a.set_ylim(1, f[-1])
-    ax2a.set_ylabel('frequency / Hz')
-    plt.setp(ax2a.get_xticklabels(), visible=False)
-    ax2a.grid('on')
+    if plot_highfreq:
+        # Axis with high frequency part of spectrogram
+        ax2a.pcolormesh(t, f, slog,
+                        vmin=vmin, vmax=vmax, cmap='plasma')
+        ax2a.set_ylim(1, f[-1])
+        ax2a.set_ylabel('frequency / Hz')
+        plt.setp(ax2a.get_xticklabels(), visible=False)
+        ax2a.grid('on')
 
-    if (pick_harmonics):
-        times, freqs, peakvals, fmax_used = \
-            harmonics.pick_spectrogram(f, t, slog,
-                                       fwin=[fmin_pick,
-                                             fmax_pick],
-                                       sigma_min=sigma_min,
-                                       p_peak_min=p_peak_min,
-                                       winlen=winlen,
-                                       nharms=nharms,
-                                       s_threshold=s_threshold)
-        for time, freq in zip(times, freqs):
-            posx = time - winlen/4
-            posy = fmax_pick
-            patchi = patches.Rectangle((posx, posy),
-                                       width=winlen/2, height=fmax_pick * 2,
-                                       alpha=0.1,
-                                       color=(0.8, 0, 0), edgecolor=None)
-            ax2a.add_patch(patchi)
+        if (pick_harmonics):
+            times, freqs, peakvals, fmax_used = \
+                harmonics.pick_spectrogram(f, t, slog,
+                                           fwin=[fmin_pick,
+                                                 fmax_pick],
+                                           sigma_min=sigma_min,
+                                           p_peak_min=p_peak_min,
+                                           winlen=winlen,
+                                           nharms=nharms,
+                                           s_threshold=s_threshold)
+            for time, freq in zip(times, freqs):
+                posx = time - winlen/4
+                posy = fmax_pick
+                patchi = patches.Rectangle((posx, posy),
+                                           width=winlen/2, height=fmax_pick * 2,
+                                           alpha=0.1,
+                                           color=(0.8, 0, 0), edgecolor=None)
+                ax2a.add_patch(patchi)
 
-            ax2a.plot(time, freq, 'ko', alpha=0.2)
+                ax2a.plot(time, freq, 'ko', alpha=0.2)
 
-        ax2a.hlines((fmin_pick, fmax_pick), 0, t[-1],
-                    colors='k', linestyles='dashed')
-        # Write Picks to file
-        write_picks(os.path.join(path_out, 'Picks'),
-                    times, freqs, peakvals, tr.stats, st_current)
+            ax2a.hlines((fmin_pick, fmax_pick), 0, t[-1],
+                        colors='k', linestyles='dashed')
+            # Write Picks to file
+            write_picks(os.path.join(path_out, 'Picks'),
+                        times, freqs, peakvals, tr.stats)
 
     # Axis with low frequency part of spectrogram
     ax2b.pcolormesh(t, np.log10(1./f) + 1., slog,
                     vmin=vmin, vmax=vmax, cmap='plasma')
     ax2b.set_ylim(np.log10(1./fmin), 1)
-    ax2b.set_xlabel('time / seconds')
+    ax2b.set_xlabel('time of day')
     ax2b.set_ylabel('period / seconds')
     ax2b.set_xlim(0, t[-1])
 
@@ -212,9 +203,11 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
     ax2b.grid(axis='y', which='major', linewidth=1)
     ax2b.grid(axis='y', which='minor')
 
-    ax1.set_xticks(np.arange(0, 86401, 10800))
-    ax2b.set_xticklabels(['00:00', '03:00', '06:00', '09:00', '12:00',
-                          '15:00', '18:00', '21:00', '24:00'])
+    ax1.set_xticks(np.arange(0, 86401, 7200))
+    ax2b.set_xticklabels(['00:00', '02:00', '04:00', '06:00',
+                          '08:00', '10:00', '12:00', '14:00',
+                          '16:00', '18:00', '20:00', '22:00', '24:00'])
+
     ax2b.grid(axis='x')
 
     if (pick_harmonics):
@@ -239,33 +232,34 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
         _mark_events(cat, tr.stats, ax2b, ypos=2.9)
 
     # Axis with colorbar
-    mappable = ax2a.collections[0]
+    mappable = ax2b.collections[0]
     cb = plt.colorbar(mappable=mappable, cax=ax3)
     ax3.set_ylabel('Amplitude / dB')
-    cb.set_ticks((-150, -100, -50, 0, 50, 100))
+    cb.set_ticks((-250, -200, -150, -100, -50, 0, 50, 100))
 
     # Axis with mean PSD of signal
-    ax4a.plot(np.mean(slog, axis=1), f, color='black')
-    ax4a.plot(np.percentile(slog, axis=1, q=95), f,
-              color='darkgrey', linestyle='dashed')
-    ax4a.plot(np.percentile(slog, axis=1, q=5), f,
-              color='darkgrey', linestyle='dashed')
-    ax4a.set_ylim(1, f[-1])
-    ax4a.set_ylabel('frequency / Hz')
-    ax4a.yaxis.tick_right()
-    ax4a.yaxis.set_label_position('right')
-    ax4a.set_xticks((-150, -100, -50, 0, 50, 100))
-    ax4a.set_xticklabels(())
-    ax4a.set_xlim(vmin, vmax)
-    ax4b.grid(axis='y', which='major', linewidth=1)
-    ax4a.grid('on')
+    if plot_highfreq:
+        ax4a.plot(np.mean(slog, axis=1), f, color='black')
+        ax4a.plot(np.percentile(slog, axis=1, q=95), f,
+                  color='darkgrey', linestyle='dashed')
+        ax4a.plot(np.percentile(slog, axis=1, q=5), f,
+                  color='darkgrey', linestyle='dashed')
+        ax4a.set_ylim(1, f[-1])
+        ax4a.set_ylabel('frequency / Hz')
+        ax4a.yaxis.tick_right()
+        ax4a.yaxis.set_label_position('right')
+        ax4a.set_xticks((-250, -200, -150, -100, -50, 0, 50, 100))
+        ax4a.set_xticklabels(())
+        ax4a.set_xlim(vmin, vmax)
+        ax4a.grid(axis='y', which='major', linewidth=1)
+        ax4a.grid('on')
 
     ax4b.plot(np.mean(slog, axis=1), np.log10(1./f) + 1., color='black')
     ax4b.plot(np.percentile(slog, axis=1, q=95), np.log10(1./f) + 1.,
               color='darkgrey', linestyle='dashed')
     ax4b.plot(np.percentile(slog, axis=1, q=5), np.log10(1./f) + 1.,
               color='darkgrey', linestyle='dashed')
-    ax4b.set_xticks((-150, -100, -50, 0, 50, 100))
+    ax4b.set_xticks((-250, -200, -150, -100, -50, 0, 50, 100))
     ax4b.set_xlim(vmin, vmax)
     ax4b.set_ylabel('period / seconds')
     ax4b.set_xlabel('Amplitude / dB')
@@ -280,15 +274,11 @@ def calc_spec(fnam_smgr, fmin=1e-2, fmax=10, vmin=-180, vmax=-80, winlen=300,
     ax4b.grid(axis='x')
     ax4b.yaxis.tick_right()
 
-    fig.suptitle('%s.%s Day %04d/%02d/%02d - %02d:%02d:%02d' %
+    fig.suptitle('%s.%s Day %s - %s' %
                  (tr.stats.station,
                   tr.stats.channel,
-                  tr.stats.starttime.year,
-                  tr.stats.starttime.month,
-                  tr.stats.starttime.day,
-                  tr.stats.starttime.hour,
-                  tr.stats.starttime.minute,
-                  tr.stats.starttime.second,))
+                  tr.stats.starttime.strftime('%Y/%m/%d-%H:%M:%S'),
+                  tr.stats.endtime.strftime('%Y/%m/%d-%H:%M:%S')))
 
     plt.savefig(os.path.join(path_out, 'Spectrograms', fnam_pic),
                 dpi=dpi)

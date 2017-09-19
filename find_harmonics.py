@@ -40,6 +40,12 @@ def define_arguments():
             'hydrophone channel (i.e. 40)'
     parser.add_argument('--vmax', help=helptext, type=float, default=-60.0)
 
+    helptext = 'Window length for spectrogram calculation in seconds, default: 300'
+    parser.add_argument('--winlen', help=helptext, type=float, default=300.0)
+
+    helptext = 'Do not plot high frequency part of the seismogram (above 1 Hz)'
+    parser.add_argument('--skip_hf', help=helptext, action='store_true', default=False)
+
     helptext = 'Output directory (default: ''.'')'
     parser.add_argument('--out_path', help=helptext, default='.')
 
@@ -67,8 +73,8 @@ def main():
     # Calc spectrograms and pick maxima for all seismogram files
     for fnam_smgr in tqdm(files):
         calc_spec(fnam_smgr, fmin=1e-2, fmax=10,
-                  vmin=args.vmin, vmax=args.vmax, winlen=300,
-                  pick_harmonics=True, 
+                  vmin=args.vmin, vmax=args.vmax, winlen=args.winlen,
+                  plot_highfreq=not(args.skip_hf), 
                   fmin_pick=args.fmin, fmax_pick=args.fmax,
                   s_threshold=-160, nharms=args.nharms, dpi=300,
                   path_out=args.out_path)
