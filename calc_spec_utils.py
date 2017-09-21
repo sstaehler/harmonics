@@ -7,6 +7,7 @@ from obspy.signal.util import next_pow_2
 import harmonics
 import matplotlib.patches as patches
 import matplotlib as mpl
+from fit_poly import pick_peaks
 
 mpl.rcParams['mathtext.default'] = 'regular'
 mpl.rcParams['agg.path.chunksize'] = 10000
@@ -52,10 +53,23 @@ def time_of_day(time):
     return time.hour*3600 + time.minute*60 + time.second
 
 
+def _integrate_displacement(t, f, s, peaks_periods, width):
+        disp_int = np.zeros(len(t))
+        for i in range(0, len(t)):
+            fmin_integrate = 1. / (peaks_periods[i] + width/2)
+            fmax_integrate = 1. / (peaks_periods[i] - width/2)
+            bol_peak = np.array((f > fmin_integrate,
+                                 f < fmax_integrate)).all(axis=0)
+            df = f[2] - f[1]
+            s_i = s[:, i]
+            disp_int[i] = np.sum(np.sqrt(s_i[bol_peak])) * df
+        return disp_int
+
+
 def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10, 
               vmin=-180, vmax=-80, winlen=300,
               pick_harmonics=False, fmin_pick=0.4, fmax_pick=1.2,
-              plot_highfreq=True,
+              plot_highfreq=True, pick_peak=True, 
               fmin_plot=None, fmax_plot=None,
               s_threshold=-140, path_out='.', nharms=4, sigma_min=1e-3,
               p_peak_min=5, dpi=100, cat=None):
@@ -94,8 +108,7 @@ def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10,
 
     # Seismogram axis
     ax1 = fig.add_axes([0.1, 0.75, 0.7, 0.2])  # [left bottom width height]
-    if fnam_aux:
-        ax1b = ax1.twinx()
+    ax1b = ax1.twinx()
 
     if plot_highfreq:
         # Spectrogram axis (f>1Hz)
@@ -188,6 +201,9 @@ def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10,
             write_picks(os.path.join(path_out, 'Picks'),
                         times, freqs, peakvals, tr.stats)
 
+
+
+
     # Axis with low frequency part of spectrogram
     ax2b.pcolormesh(t, np.log10(1./f) + 1., slog,
                     vmin=vmin, vmax=vmax, cmap='plasma')
@@ -209,6 +225,33 @@ def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10,
                           '16:00', '18:00', '20:00', '22:00', '24:00'])
 
     ax2b.grid(axis='x')
+
+    if (pick_peak):
+        periods = 1./(f+1e-10)
+        width = 4
+        peaks_periods, peakvals = pick_peaks(periods, slog, 
+                                             plot=False,
+                                             f_min=3.5, f_max=8.)
+        ax2b.plot(t, np.log10(peaks_periods) + 1, 'g', linewidth=1.5)
+        ax2b.plot(t, np.log10(peaks_periods - width/2) + 1, 'g--', linewidth=1.)
+        ax2b.plot(t, np.log10(peaks_periods + width/2) + 1, 'g--', linewidth=1.)
+
+        disp_int = _integrate_displacement(t, f, s, peaks_periods, width)
+
+        # Write Picks to file
+        write_picks(os.path.join(path_out, 'Picks'),
+                    t, peaks_periods, peakvals, tr.stats)
+        
+        if tr.stats.channel[1] == 'D':
+            ax1b.plot(t, disp_int/10, label='integrated displacement', color='r')
+            ax1b.set_ylabel('Pressure / Pa', color='r')
+        else:
+            ax1b.plot(t, disp_int*1e6, label='integrated displacement', color='r')
+            ax1b.set_ylabel('Displacement / m', color='r')
+
+        ax1b.plot(t, peaks_periods, label='weighted peak', color='g')
+        ax1b.tick_params('y', colors='r')
+        ax1b.set_ylim(0, 10)
 
     if (pick_harmonics):
         for time, freq in zip(times, freqs):
