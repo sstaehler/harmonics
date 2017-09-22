@@ -3,8 +3,7 @@ Find spectral peaks signal in OBS data
 
 ## Usage
     python ./find_harmonics.py doc/testdata.mseed --winlen 600 --kind peak --fmin 0.1 --fmax 0.3
-
-
+![Output](https://raw.githubusercontent.com/sstaehler/harmonics/master/doc/DARS1.BHZ_2015_02_08_00.png)
 
     usage: find_harmonics.py [-h] [-k {none,peak,harmonic}] [--nharms NHARMS]
                              [--fmin FMIN] [--fmax FMAX] [--vmin VMIN]
