@@ -20,27 +20,29 @@ def pick_peak(f_in, p_in, ax=None):
     p_peak_initial = p_in[i]
 
     if (ax):
-        a, b, r = _parabolic_fit(f_in, p_in, i, 500, ax)
+        f_peak_par, p_peak_par, r = \
+                _parabolic_fit(f_in, p_in, i, 500, ax)
         ax.plot(f_peak_initial, p_peak_initial, 'ro')
-        ax.plot(a, b, 'go')
+        ax.plot(f_peak_par, p_peak_par, 'go')
         ax.plot(f_in, r[0] * f_in**2 + r[1] * f_in + r[2])
     else:
-        a, b, r = _parabolic_fit(f_in, p_in, i, 500)
+        f_peak_par, p_peak_par, r = \
+                _parabolic_fit(f_in, p_in, i, 500)
 
-    res = [a, b, r]
-    return res
+    return [f_peak_par, p_peak_par, f_peak_initial, p_peak_initial]
 
 
-def weighted_mean(x, w, exp=1.0):
-    w_norm = w - np.min(w)
-    w_norm /= np.sum(w_norm**exp) 
-    return np.sum(x * w_norm**exp)
+def weighted_mean(x, w):
+    w_norm = w/np.sum(w) 
+    return np.sum(x * w_norm)
 
 
 def pick_peaks(f_in, p_in, f_min=1., f_max=10., plot=False):
-    f_peaks = np.zeros(p_in.shape[1])
-    p_peaks = np.zeros(p_in.shape[1])
-    sigma_peaks = np.zeros(p_in.shape[1])
+    f_peaks_par = np.zeros(p_in.shape[1])
+    p_peaks_par = np.zeros(p_in.shape[1])
+    f_peaks_pick = np.zeros(p_in.shape[1])
+    p_peaks_pick = np.zeros(p_in.shape[1])
+    f_means = np.zeros(p_in.shape[1])
 
     i = 0
 
@@ -53,23 +55,25 @@ def pick_peaks(f_in, p_in, f_min=1., f_max=10., plot=False):
         else:
             res = pick_peak(f_in[bol], p_in[bol, i])
 
-        mean = weighted_mean(f_in[bol], p_in[bol, i])
+        f_means[i] = weighted_mean(f_in[bol], 10**(p_in[bol, i])/20)
 
-        f_peaks[i] = res[0]
-        p_peaks[i] = res[1]
+        f_peaks_par[i] = res[0]
+        p_peaks_par[i] = res[1]
+        f_peaks_pick[i] = res[2]
+        p_peaks_pick[i] = res[3]
 
         if plot:
             ax.plot(f_in, p_in[:, i], label='spectrum')
             ax.plot(f_in[bol], p_in[bol, i], linewidth=1.5, color='r',
                     label='spectrum, active')
-            ax.plot(mean, np.max(p_in), 'bo')
+            ax.plot(f_means[i], np.max(p_in), 'bo')
             #ax.set_ylim(-160, -60)
-            ax.set_xlim(0, 20)
+            ax.set_xlim(0, f_max*1.5)
             fig.savefig('Fits/%05d.png' % i)
             plt.close()
-            print(i, f_peaks[i], mean)
+            print(i, f_peaks_pick[i], f_peaks_par[i], f_means[i])
 
 
-    return f_peaks, p_peaks
+    return [f_peaks_par, p_peaks_par], [f_peaks_pick, p_peaks_pick], f_means
 
 

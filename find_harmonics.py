@@ -17,11 +17,17 @@ from calc_spec_utils import calc_spec
 
 
 def define_arguments():
-    helptext = 'Find harmonic signal in seismogram'
+    helptext = 'Plot spectrogram and find spectral peaks in in seismogram'
     parser = argparse.ArgumentParser(description=helptext)
 
     helptext = 'Path to Seismogram files (can be anything that Obspy reads)'
     parser.add_argument('smgr_path', help=helptext)
+
+    helptext = 'Kind of signal to find. Options: none, harmonic or peak'
+    parser.add_argument('-k', '--kind', 
+                        choices=['none', 'peak', 'harmonic'],
+                        default='none',
+                        help=helptext)
 
     helptext = 'Number of harmonics (default: 4)'
     parser.add_argument('--nharms', help=helptext, type=int, default=4)
@@ -75,6 +81,8 @@ def main():
         calc_spec(fnam_smgr, fmin=1e-2, fmax=10,
                   vmin=args.vmin, vmax=args.vmax, winlen=args.winlen,
                   plot_highfreq=not(args.skip_hf), 
+                  pick_harmonics=(args.kind=='harmonic'), 
+                  pick_peak=(args.kind=='peak'), 
                   fmin_pick=args.fmin, fmax_pick=args.fmax,
                   s_threshold=-160, nharms=args.nharms, dpi=300,
                   path_out=args.out_path)

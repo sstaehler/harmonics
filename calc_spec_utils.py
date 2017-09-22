@@ -53,11 +53,15 @@ def time_of_day(time):
     return time.hour*3600 + time.minute*60 + time.second
 
 
-def _integrate_displacement(t, f, s, peaks_periods, width):
+def _integrate_displacement(t, f, s, peaks_periods, width=None,
+                            fmin=0.01, fmax=10.0):
         disp_int = np.zeros(len(t))
+        fmin_integrate = fmin
+        fmax_integrate = fmax
         for i in range(0, len(t)):
-            fmin_integrate = 1. / (peaks_periods[i] + width/2)
-            fmax_integrate = 1. / (peaks_periods[i] - width/2)
+            if (width):
+                fmin_integrate = 1. / (peaks_periods[i] + width/2)
+                fmax_integrate = 1. / (peaks_periods[i] - width/2)
             bol_peak = np.array((f > fmin_integrate,
                                  f < fmax_integrate)).all(axis=0)
             df = f[2] - f[1]
@@ -68,8 +72,9 @@ def _integrate_displacement(t, f, s, peaks_periods, width):
 
 def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10, 
               vmin=-180, vmax=-80, winlen=300,
-              pick_harmonics=False, fmin_pick=0.4, fmax_pick=1.2,
-              plot_highfreq=True, pick_peak=True, 
+              pick_harmonics=False,
+              plot_highfreq=True, pick_peak=False, 
+              fmin_pick=0.4, fmax_pick=1.2,
               fmin_plot=None, fmax_plot=None,
               s_threshold=-140, path_out='.', nharms=4, sigma_min=1e-3,
               p_peak_min=5, dpi=100, cat=None):
@@ -94,6 +99,7 @@ def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10,
                                                   tr.stats.starttime.day,
                                                   tr.stats.starttime.hour)
 
+    # Calc spectrogram in m²/Hz
     s, f, t = specgram(tr.data, Fs=tr.stats.sampling_rate,
                        NFFT=winlen*tr.stats.sampling_rate,
                        pad_to=next_pow_2(winlen*tr.stats.sampling_rate) * 2,
@@ -101,6 +107,7 @@ def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10,
 
     t += time_of_day(tr.stats.starttime)
 
+    # Calc spectrogram in dB
     slog = 10 * np.log10(s)
     f += 1e-10
 
@@ -228,19 +235,35 @@ def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10,
 
     if (pick_peak):
         periods = 1./(f+1e-10)
-        width = 4
-        peaks_periods, peakvals = pick_peaks(periods, slog, 
-                                             plot=False,
-                                             f_min=3.5, f_max=8.)
-        ax2b.plot(t, np.log10(peaks_periods) + 1, 'g', linewidth=1.5)
-        ax2b.plot(t, np.log10(peaks_periods - width/2) + 1, 'g--', linewidth=1.)
-        ax2b.plot(t, np.log10(peaks_periods + width/2) + 1, 'g--', linewidth=1.)
+        width = 5 # width of integration window in seconds
+        peaks_par, peaks_pick, mean_freq = \
+                pick_peaks(f, slog, 
+                           plot=False,
+                           f_min=fmin_pick, f_max=fmax_pick)
+        mean_periods = 1./mean_freq
+        ax2b.plot(t, np.log10(1./peaks_par[0]) + 1, 'g', 
+                  linewidth=1.5, label='Parabolic peak')
+        ax2b.plot(t, np.log10(1./peaks_pick[0]) + 1, color='darkred', 
+                  linewidth=1.5, label='Picked peak')
+        ax2b.plot(t, np.log10(mean_periods) + 1, color='lightgreen', 
+                  linewidth=1.5, label='energy-weighted mean')
+        # ax2b.plot(t, np.log10(mean_periods - width/2) + 1, 
+        #           color='lightgreen', linestyle='dashed', linewidth=1.)
+        # ax2b.plot(t, np.log10(mean_periods + width/2) + 1, 
+        #           color='lightgreen', linestyle='dashed', linewidth=1.)
+        ax2b.hlines((np.log10(1. / fmin_pick) + 1,
+                     np.log10(1. / fmax_pick) + 1),
+                    0, t[-1], linewidth=0.5,
+                    colors='k', linestyles='dashed')
 
-        disp_int = _integrate_displacement(t, f, s, peaks_periods, width)
+        ax2b.legend(fontsize=10)
+
+        disp_int = _integrate_displacement(t, f, s, mean_periods, 
+                                           fmin=fmin_pick, fmax=fmax_pick)
 
         # Write Picks to file
         write_picks(os.path.join(path_out, 'Picks'),
-                    t, peaks_periods, peakvals, tr.stats)
+                    t, 1./mean_freq, disp_int, tr.stats)
         
         if tr.stats.channel[1] == 'D':
             ax1b.plot(t, disp_int/10, label='integrated displacement', color='r')
@@ -249,7 +272,8 @@ def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10,
             ax1b.plot(t, disp_int*1e6, label='integrated displacement', color='r')
             ax1b.set_ylabel('Displacement / m', color='r')
 
-        ax1b.plot(t, peaks_periods, label='weighted peak', color='g')
+        ax1b.plot(t, 1./peaks_par[0], label='peak', color='g')
+        ax1b.plot(t, mean_periods, label='weighted mean', color='b')
         ax1b.tick_params('y', colors='r')
         ax1b.set_ylim(0, 10)
 
