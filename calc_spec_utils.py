@@ -39,14 +39,23 @@ def _pick_longperiod(t, f, s, fmin=0.01, fmax=0.1):
     return times, level
 
 
-def write_picks(path, times, picks, peakvals, stats):
+def write_picks(path, times, vals, stats, header):
     fnam_out = os.path.join(path, 'picks_%s_%s.txt' %
                             (stats.station, stats.channel))
 
-    with open(fnam_out, 'a') as fid:
-        for t, p, peak in zip(times, picks, peakvals):
-            t_out = stats.starttime + t
-            fid.write('%s, %f, %f\n' % (t_out, p, peak))
+    fmt = '%s %s\n'
+    
+    vals_array = np.asarray(vals)
+
+    with open(fnam_out, 'w+') as fid:
+        fid.write('# ' + header + '\n')
+        for i in range(0, len(times)):
+            t_out = stats.starttime + times[i]
+            arraystring = np.array2string(vals_array[:, i], 
+                                          precision=4,
+                                          max_line_width=255)
+            fid.write(fmt % (t_out, arraystring[1:-1]))
+                             
 
 
 def time_of_day(time):
@@ -262,8 +271,21 @@ def calc_spec(fnam_smgr, fnam_aux=None, fmin=1e-2, fmax=10,
                                            fmin=fmin_pick, fmax=fmax_pick)
 
         # Write Picks to file
+        header='time, ' + \
+                'energy-weighted mean period / s, ' + \
+                'int. disp in freq. window / m, ' + \
+                'peak period (parabolic fit) / s, ' + \
+                'peak energy (parabolic fit) / dB, ' + \
+                'peak period (picked) / s, ' + \
+                'peak energy (picked) / dB '
+
         write_picks(os.path.join(path_out, 'Picks'),
-                    t, 1./mean_freq, disp_int, tr.stats)
+                    t, 
+                    [1./mean_freq, disp_int,
+                     1./peaks_par[0], 1./peaks_par[1],
+                     1./peaks_pick[0], 1./peaks_pick[1]],
+                    tr.stats,
+                    header)
         
         if tr.stats.channel[1] == 'D':
             ax1b.plot(t, disp_int/10, label='integrated displacement', color='r')
